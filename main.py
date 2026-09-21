@@ -16,13 +16,13 @@ st.set_page_config(
     layout="wide",
 )
 
-# 인구 데이터
+# 인구 데이터 주소
 POP_URL = (
     "https://raw.githubusercontent.com/greatsong/modudata/"
     "main/data/population_yearly.csv.gz"
 )
 
-# 시군구 경계 데이터
+# 시군구 경계 데이터 주소
 GEO_URL = (
     "https://raw.githubusercontent.com/greatsong/modudata/"
     "main/data/boundaries/sigungu_kr.geojson"
@@ -30,36 +30,65 @@ GEO_URL = (
 
 
 # =========================================================
-# 2. 지도 색상
+# 2. 성별별 지도 색상
 # =========================================================
-# 유소년 인구 비율이 낮을수록 옅게,
-# 높을수록 진하게 표시한다.
-COLORS = [
-    "#EFF6FF",
-    "#BFDBFE",
-    "#60A5FA",
-    "#2563EB",
-    "#1E3A8A",
-]
 
-# Plotly의 연속형 색상을
-# 5단계로 끊어 보이게 만든 색상표
-STEP_COLORSCALE = [
-    [0.00, COLORS[0]],
-    [0.20, COLORS[0]],
+# 전체 / 남자 / 여자를 선택할 때
+# 지도 색상도 함께 바뀌도록 설정한다.
+COLOR_PALETTES = {
 
-    [0.20, COLORS[1]],
-    [0.40, COLORS[1]],
+    # 전체 - 청록 계열
+    "전체": [
+        "#ECFDF5",
+        "#A7F3D0",
+        "#5EEAD4",
+        "#14B8A6",
+        "#0F766E",
+    ],
 
-    [0.40, COLORS[2]],
-    [0.60, COLORS[2]],
+    # 남자 - 파란 계열
+    "남자": [
+        "#EFF6FF",
+        "#BFDBFE",
+        "#93C5FD",
+        "#3B82F6",
+        "#1D4ED8",
+    ],
 
-    [0.60, COLORS[3]],
-    [0.80, COLORS[3]],
+    # 여자 - 로즈 계열
+    "여자": [
+        "#FFF1F2",
+        "#FECDD3",
+        "#FDA4AF",
+        "#F43F5E",
+        "#BE123C",
+    ],
+}
 
-    [0.80, COLORS[4]],
-    [1.00, COLORS[4]],
-]
+
+def make_step_colorscale(colors):
+    """
+    Plotly는 기본적으로 색을 부드럽게 이어서 표현한다.
+    같은 색을 구간 양 끝에 반복해서 넣어
+    5단계로 딱 끊어지는 단계구분도를 만든다.
+    """
+
+    return [
+        [0.00, colors[0]],
+        [0.20, colors[0]],
+
+        [0.20, colors[1]],
+        [0.40, colors[1]],
+
+        [0.40, colors[2]],
+        [0.60, colors[2]],
+
+        [0.60, colors[3]],
+        [0.80, colors[3]],
+
+        [0.80, colors[4]],
+        [1.00, colors[4]],
+    ]
 
 
 # =========================================================
@@ -69,14 +98,16 @@ STEP_COLORSCALE = [
 def download_bytes(url):
     """
     인터넷에서 파일을 내려받는다.
-    한 번 받은 데이터는 캐시에 저장하여
-    앱을 다시 실행할 때 빠르게 불러온다.
+
+    캐시를 사용해서 매번 다시 다운로드하지 않도록 한다.
     """
 
     response = requests.get(
         url,
         timeout=60,
-        headers={"User-Agent": "Mozilla/5.0"},
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
     )
 
     response.raise_for_status()
@@ -89,7 +120,7 @@ def download_bytes(url):
 # =========================================================
 def detect_csv_encoding(data):
     """
-    CSV 파일의 문자 인코딩을 확인한다.
+    CSV 파일이 UTF-8인지 CP949인지 확인한다.
     """
 
     encodings = [
@@ -99,6 +130,7 @@ def detect_csv_encoding(data):
     ]
 
     for encoding in encodings:
+
         try:
             pd.read_csv(
                 io.BytesIO(data),
@@ -118,13 +150,12 @@ def detect_csv_encoding(data):
 
 
 # =========================================================
-# 5. 나이 열 이름에서 나이 숫자 찾기
+# 5. 나이 열에서 나이 숫자 추출
 # =========================================================
 def age_from_column(column_name, prefix):
     """
-    열 이름에서 나이를 찾는다.
+    예시
 
-    예:
     계_0세 -> 0
     남_14세 -> 14
     여_65세 -> 65
@@ -148,24 +179,24 @@ def age_from_column(column_name, prefix):
 
 
 # =========================================================
-# 6. 인구 데이터 읽기
+# 6. 인구 데이터 처리
 # =========================================================
 @st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
 def load_population(url):
     """
-    가장 최신 연도의 읍면동 인구를 읽고
-    시군구 단위로 합산한다.
+    가장 최신 연도의 읍면동 자료를 불러온 뒤
+    시군구 코드 앞 5자리 기준으로 합친다.
 
-    전체, 남자, 여자 각각의
-    총인구와 유소년 인구를 계산한다.
+    유소년 인구는 0~14세로 계산한다.
     """
 
     raw = download_bytes(url)
 
     encoding = detect_csv_encoding(raw)
 
+
     # -----------------------------------------------------
-    # 열 이름 먼저 읽기
+    # 열 이름만 먼저 읽기
     # -----------------------------------------------------
     header = pd.read_csv(
         io.BytesIO(raw),
@@ -184,6 +215,7 @@ def load_population(url):
     male_age_columns = []
     female_age_columns = []
 
+
     for column in columns:
 
         if age_from_column(column, "계") is not None:
@@ -197,7 +229,7 @@ def load_population(url):
 
 
     # -----------------------------------------------------
-    # 0~14세 유소년 인구 열 찾기
+    # 유소년 인구 = 0~14세
     # -----------------------------------------------------
     youth_total_columns = [
         column
@@ -220,12 +252,22 @@ def load_population(url):
 
     if not youth_total_columns:
         raise ValueError(
-            "0~14세 인구 열을 찾지 못했습니다."
+            "0~14세 전체 인구 열을 찾지 못했습니다."
+        )
+
+    if not youth_male_columns:
+        raise ValueError(
+            "0~14세 남자 인구 열을 찾지 못했습니다."
+        )
+
+    if not youth_female_columns:
+        raise ValueError(
+            "0~14세 여자 인구 열을 찾지 못했습니다."
         )
 
 
     # -----------------------------------------------------
-    # 최신 연도 찾기
+    # 가장 최신 연도 찾기
     # -----------------------------------------------------
     years = pd.read_csv(
         io.BytesIO(raw),
@@ -239,11 +281,13 @@ def load_population(url):
         errors="coerce",
     )
 
-    latest_year = int(years.max())
+    latest_year = int(
+        years.max()
+    )
 
 
     # -----------------------------------------------------
-    # 필요한 열만 읽기
+    # 계산에 필요한 열만 읽기
     # -----------------------------------------------------
     age_columns = (
         total_age_columns
@@ -260,14 +304,15 @@ def load_population(url):
     ] + age_columns
 
 
-    # 행정동 코드는 숫자가 아니라
-    # 지역을 구분하기 위한 이름표이므로
-    # 반드시 문자열로 읽는다.
+    # 코드 열은 반드시 문자열로 읽는다.
+    # 행정동 코드는 숫자가 아니라 지역 식별용 이름표다.
     reader = pd.read_csv(
         io.BytesIO(raw),
         compression="gzip",
         usecols=use_columns,
-        dtype={"코드": "string"},
+        dtype={
+            "코드": "string"
+        },
         encoding=encoding,
         chunksize=5000,
         low_memory=False,
@@ -278,7 +323,7 @@ def load_population(url):
 
 
     # -----------------------------------------------------
-    # 최신 연도 자료만 남기기
+    # 최신 연도만 남기기
     # -----------------------------------------------------
     for chunk in reader:
 
@@ -323,7 +368,7 @@ def load_population(url):
 
 
     # -----------------------------------------------------
-    # 행정동 코드 정리
+    # 코드 정리
     # -----------------------------------------------------
     latest["코드"] = (
         latest["코드"]
@@ -337,8 +382,7 @@ def load_population(url):
     )
 
 
-    # 행정동 코드 앞 5자리가
-    # 시군구 코드이다.
+    # 행정동 코드 앞 5자리가 시군구 코드
     latest["시군구코드"] = (
         latest["코드"]
         .str[:5]
@@ -346,11 +390,14 @@ def load_population(url):
 
 
     # -----------------------------------------------------
-    # 인구 값을 숫자로 변환
+    # 인구 데이터를 숫자로 변환
     # -----------------------------------------------------
     latest[age_columns] = (
         latest[age_columns]
-        .replace({",": ""}, regex=True)
+        .replace(
+            {",": ""},
+            regex=True,
+        )
         .apply(
             pd.to_numeric,
             errors="coerce",
@@ -360,7 +407,7 @@ def load_population(url):
 
 
     # =====================================================
-    # 전체 인구
+    # 전체
     # =====================================================
     latest["전체_총인구"] = (
         latest[total_age_columns]
@@ -374,7 +421,7 @@ def load_population(url):
 
 
     # =====================================================
-    # 남자 인구
+    # 남자
     # =====================================================
     latest["남자_총인구"] = (
         latest[male_age_columns]
@@ -388,7 +435,7 @@ def load_population(url):
 
 
     # =====================================================
-    # 여자 인구
+    # 여자
     # =====================================================
     latest["여자_총인구"] = (
         latest[female_age_columns]
@@ -402,7 +449,7 @@ def load_population(url):
 
 
     # -----------------------------------------------------
-    # 읍면동 자료를 시군구 단위로 합친다.
+    # 읍면동을 시군구별로 합치기
     # -----------------------------------------------------
     sigungu = (
         latest
@@ -427,18 +474,22 @@ def load_population(url):
     # -----------------------------------------------------
     # 유소년 인구 비율 계산
     # -----------------------------------------------------
+
+    # 전체 유소년 비율
     sigungu["전체_유소년비율"] = (
         sigungu["전체_유소년인구"]
         / sigungu["전체_총인구"]
         * 100
     )
 
+    # 남자 중 유소년 비율
     sigungu["남자_유소년비율"] = (
         sigungu["남자_유소년인구"]
         / sigungu["남자_총인구"]
         * 100
     )
 
+    # 여자 중 유소년 비율
     sigungu["여자_유소년비율"] = (
         sigungu["여자_유소년인구"]
         / sigungu["여자_총인구"]
@@ -450,38 +501,54 @@ def load_population(url):
 
 
 # =========================================================
-# 7. GeoJSON 읽기
+# 7. GeoJSON 불러오기
 # =========================================================
 @st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
 def load_geojson(url):
+    """
+    전국 시군구 경계 GeoJSON을 불러온다.
+    """
 
     response = requests.get(
         url,
         timeout=60,
-        headers={"User-Agent": "Mozilla/5.0"},
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
     )
 
     response.raise_for_status()
 
     geojson = response.json()
 
+
     boundary_rows = []
 
 
-    for feature in geojson.get("features", []):
+    for feature in geojson.get(
+        "features",
+        [],
+    ):
 
         properties = feature.get(
             "properties",
             {},
         )
 
-        raw_code = properties.get("코드")
+
+        raw_code = properties.get(
+            "코드"
+        )
+
 
         if raw_code is None:
             continue
 
 
-        code = str(raw_code).strip()
+        code = str(
+            raw_code
+        ).strip()
+
 
         code = code.replace(
             ".0",
@@ -491,17 +558,19 @@ def load_geojson(url):
         code = code.zfill(5)
 
 
-        # GeoJSON 안의 코드도 문자열로 통일
+        # GeoJSON 코드도 문자열로 통일한다.
         properties["코드"] = code
 
 
         boundary_rows.append(
             {
                 "시군구코드": code,
+
                 "시군구": properties.get(
                     "시군구",
                     "",
                 ),
+
                 "시도": properties.get(
                     "시도",
                     "",
@@ -514,10 +583,14 @@ def load_geojson(url):
         boundary_rows
     )
 
+
     boundaries = (
         boundaries
-        .drop_duplicates("시군구코드")
+        .drop_duplicates(
+            "시군구코드"
+        )
     )
+
 
     return geojson, boundaries
 
@@ -525,16 +598,18 @@ def load_geojson(url):
 # =========================================================
 # 8. 제목
 # =========================================================
-st.title("전국 유소년 인구 지도")
+st.title(
+    "전국 유소년 인구 지도"
+)
 
 st.caption(
     "전국 시군구별 0~14세 유소년 인구 비율을 "
-    "5단계 색상으로 표시합니다."
+    "지도에서 확인할 수 있습니다."
 )
 
 
 # =========================================================
-# 9. 데이터 읽기
+# 9. 데이터 불러오기
 # =========================================================
 try:
 
@@ -543,18 +618,23 @@ try:
     ):
 
         latest_year, population = (
-            load_population(POP_URL)
+            load_population(
+                POP_URL
+            )
         )
 
         geojson, boundaries = (
-            load_geojson(GEO_URL)
+            load_geojson(
+                GEO_URL
+            )
         )
 
 
 except Exception as e:
 
     st.error(
-        f"데이터를 불러오는 중 오류가 발생했습니다: {e}"
+        "데이터를 불러오는 중 "
+        f"오류가 발생했습니다: {e}"
     )
 
     st.stop()
@@ -563,17 +643,24 @@ except Exception as e:
 # =========================================================
 # 10. 성별 선택
 # =========================================================
-st.subheader("조회 조건")
+st.subheader(
+    "조회 조건"
+)
 
 gender = st.radio(
     "성별",
-    ["전체", "남자", "여자"],
+    [
+        "전체",
+        "남자",
+        "여자",
+    ],
     horizontal=True,
 )
 
 
-# 선택한 성별에 따라
-# 사용할 열을 정한다.
+# ---------------------------------------------------------
+# 선택한 성별에 따라 사용할 열 결정
+# ---------------------------------------------------------
 if gender == "전체":
 
     rate_column = "전체_유소년비율"
@@ -593,9 +680,25 @@ else:
     population_column = "여자_총인구"
 
 
+# ---------------------------------------------------------
+# 선택한 성별에 따라 지도 색상 변경
+# ---------------------------------------------------------
+selected_colors = COLOR_PALETTES[
+    gender
+]
+
+STEP_COLORSCALE = (
+    make_step_colorscale(
+        selected_colors
+    )
+)
+
+
 # =========================================================
-# 11. 지도 경계 + 인구 자료 연결
+# 11. 지도 경계와 인구 데이터 연결
 # =========================================================
+
+# 이름이 아니라 시군구 5자리 코드로 연결한다.
 map_data = boundaries.merge(
     population,
     on="시군구코드",
@@ -603,8 +706,7 @@ map_data = boundaries.merge(
 )
 
 
-# 화면에서 사용하기 편하도록
-# 선택한 비율을 별도 열로 만든다.
+# 선택한 성별의 값을 공통 열 이름으로 만든다.
 map_data["유소년비율"] = (
     map_data[rate_column]
 )
@@ -619,17 +721,19 @@ map_data["총인구"] = (
 
 
 # =========================================================
-# 12. 유소년 비율을 5단계로 나누기
+# 12. 유소년 비율을 5단계로 분류
 # =========================================================
 
 valid_values = (
-    map_data["유소년비율"]
+    map_data[
+        "유소년비율"
+    ]
     .dropna()
 )
 
 
-# 전국 시군구의 실제 분포를 기준으로
-# 20%, 40%, 60%, 80% 지점을 구한다.
+# 전국 시군구를 실제 값 기준으로
+# 다섯 덩어리로 나눈다.
 q20 = valid_values.quantile(0.2)
 q40 = valid_values.quantile(0.4)
 q60 = valid_values.quantile(0.6)
@@ -648,9 +752,22 @@ BIN_EDGES = [
 
 BIN_LABELS = [
     f"{q20:.1f}% 미만",
-    f"{q20:.1f}% 이상 ~ {q40:.1f}% 미만",
-    f"{q40:.1f}% 이상 ~ {q60:.1f}% 미만",
-    f"{q60:.1f}% 이상 ~ {q80:.1f}% 미만",
+
+    (
+        f"{q20:.1f}% 이상 ~ "
+        f"{q40:.1f}% 미만"
+    ),
+
+    (
+        f"{q40:.1f}% 이상 ~ "
+        f"{q60:.1f}% 미만"
+    ),
+
+    (
+        f"{q60:.1f}% 이상 ~ "
+        f"{q80:.1f}% 미만"
+    ),
+
     f"{q80:.1f}% 이상",
 ]
 
@@ -664,10 +781,12 @@ map_data["구간"] = pd.cut(
 )
 
 
-# Plotly에 넣을 단계 숫자
+# Plotly에서 색을 나누기 위한 숫자
 label_to_value = {
     label: i + 0.5
-    for i, label in enumerate(BIN_LABELS)
+    for i, label in enumerate(
+        BIN_LABELS
+    )
 }
 
 
@@ -682,11 +801,11 @@ map_data["등급값"] = (
 # 13. 지도 제목
 # =========================================================
 st.subheader(
-    f"{latest_year}년 시군구별 유소년 인구 비율 · {gender}"
+    f"{latest_year}년 시군구별 유소년 인구 비율"
 )
 
 st.caption(
-    "유소년 인구: 만 0~14세"
+    f"현재 선택: {gender} · 유소년 인구 기준: 만 0~14세"
 )
 
 
@@ -707,28 +826,41 @@ mapped = map_data.dropna(
 fig.add_trace(
     go.Choropleth(
 
+        # 지도 경계
         geojson=geojson,
 
-        # GeoJSON의 5자리 시군구 코드와 연결
-        featureidkey="properties.코드",
+        # GeoJSON 안의 시군구 코드
+        featureidkey=(
+            "properties.코드"
+        ),
 
-        locations=mapped["시군구코드"],
+        # 인구 데이터의 시군구 코드
+        locations=mapped[
+            "시군구코드"
+        ],
 
-        # 색상을 결정하는 1~5단계 값
-        z=mapped["등급값"],
+        # 5단계 색상용 값
+        z=mapped[
+            "등급값"
+        ],
 
         zmin=0,
         zmax=5,
 
-        colorscale=STEP_COLORSCALE,
+        colorscale=(
+            STEP_COLORSCALE
+        ),
 
 
         # 시군구 경계선
-        marker_line_color="#FFFFFF",
-        marker_line_width=0.6,
+        marker_line_color=(
+            "#FFFFFF"
+        ),
+
+        marker_line_width=0.7,
 
 
-        # 마우스를 올렸을 때 보여 줄 자료
+        # 마우스 올렸을 때 사용할 정보
         customdata=mapped[
             [
                 "시도",
@@ -765,10 +897,14 @@ fig.add_trace(
                 4.5,
             ],
 
-            ticktext=BIN_LABELS,
+            ticktext=(
+                BIN_LABELS
+            ),
 
             thickness=18,
+
             len=0.68,
+
             x=1.01,
         ),
     )
@@ -776,10 +912,12 @@ fig.add_trace(
 
 
 # =========================================================
-# 15. 자료가 없는 지역
+# 15. 데이터 없는 지역
 # =========================================================
 missing = map_data.loc[
-    map_data["유소년비율"].isna()
+    map_data[
+        "유소년비율"
+    ].isna()
 ].copy()
 
 
@@ -790,14 +928,19 @@ if not missing.empty:
 
             geojson=geojson,
 
-            featureidkey="properties.코드",
+            featureidkey=(
+                "properties.코드"
+            ),
 
             locations=missing[
                 "시군구코드"
             ],
 
-            z=[1] * len(missing),
+            z=[
+                1
+            ] * len(missing),
 
+            # 자료가 없는 곳은 회색
             colorscale=[
                 [0, "#E5E7EB"],
                 [1, "#E5E7EB"],
@@ -805,8 +948,12 @@ if not missing.empty:
 
             showscale=False,
 
-            marker_line_color="#FFFFFF",
-            marker_line_width=0.6,
+            marker_line_color=(
+                "#FFFFFF"
+            ),
+
+            marker_line_width=0.7,
+
 
             customdata=missing[
                 [
@@ -814,6 +961,7 @@ if not missing.empty:
                     "시군구",
                 ]
             ].to_numpy(),
+
 
             hovertemplate=(
                 "<b>%{customdata[1]}</b><br>"
@@ -833,7 +981,7 @@ fig.update_geos(
     # 대한민국 전체가 화면에 맞도록 설정
     fitbounds="locations",
 
-    # 배경 지도, 바다, 국가 경계 등을 모두 없앤다.
+    # 배경 지도 요소 제거
     visible=False,
 
     showcoastlines=False,
@@ -859,9 +1007,17 @@ fig.update_layout(
         b=0,
     ),
 
-    paper_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor=(
+        "rgba(0,0,0,0)"
+    ),
 
-    plot_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor=(
+        "rgba(0,0,0,0)"
+    ),
+
+    hoverlabel=dict(
+        namelength=-1
+    ),
 )
 
 
@@ -879,12 +1035,14 @@ st.plotly_chart(
 
 
 # =========================================================
-# 18. 높은 지역 / 낮은 지역 순위
+# 18. 유소년 비율 높은 곳 / 낮은 곳
 # =========================================================
 ranking = (
     map_data
     .dropna(
-        subset=["유소년비율"]
+        subset=[
+            "유소년비율"
+        ]
     )
     [
         [
@@ -898,7 +1056,7 @@ ranking = (
 )
 
 
-# 유소년 비율 높은 곳
+# 유소년 비율 높은 곳 10개
 high10 = (
     ranking
     .sort_values(
@@ -906,11 +1064,13 @@ high10 = (
         ascending=False,
     )
     .head(10)
-    .reset_index(drop=True)
+    .reset_index(
+        drop=True
+    )
 )
 
 
-# 유소년 비율 낮은 곳
+# 유소년 비율 낮은 곳 10개
 low10 = (
     ranking
     .sort_values(
@@ -918,7 +1078,9 @@ low10 = (
         ascending=True,
     )
     .head(10)
-    .reset_index(drop=True)
+    .reset_index(
+        drop=True
+    )
 )
 
 
@@ -926,18 +1088,24 @@ low10 = (
 high10.insert(
     0,
     "순위",
-    range(1, len(high10) + 1),
+    range(
+        1,
+        len(high10) + 1,
+    ),
 )
 
 low10.insert(
     0,
     "순위",
-    range(1, len(low10) + 1),
+    range(
+        1,
+        len(low10) + 1,
+    ),
 )
 
 
 # =========================================================
-# 19. 표 두 개 나란히 출력
+# 19. 표 두 개 나란히 표시
 # =========================================================
 left, right = st.columns(2)
 
@@ -950,7 +1118,9 @@ with left:
 
     st.dataframe(
         high10,
+
         hide_index=True,
+
         use_container_width=True,
 
         column_config={
@@ -978,7 +1148,9 @@ with right:
 
     st.dataframe(
         low10,
+
         hide_index=True,
+
         use_container_width=True,
 
         column_config={
